@@ -1,18 +1,20 @@
 // src/hooks/useDatasetState.ts
+"use client";
+
 import { useEffect, useState } from "react";
 import {
   Category,
   Entry,
   Message,
-  SavedState,
   DatasetSettings,
-  ExportSchema,
+  DatasetStateSnapshot,
+  SpecialToken,
 } from "../types/dataset";
-import { loadState, saveState } from "../utils/storage";
 import { buildTxtFromEntries } from "../utils/exportTxt";
 
-const STORAGE_KEY = "datasetComposerState_v1";
-const DEFAULT_CATEGORY_ID = "cat-uncategorized";
+const STORAGE_KEY = "dataset-composer-v1";
+
+export const DEFAULT_CATEGORY_ID = "default-category";
 
 const defaultSettings: DatasetSettings = {
   turnToken: "<turn>",
@@ -25,175 +27,236 @@ const defaultSettings: DatasetSettings = {
   systemToken: "instruct",
   userToken: "user",
   modelToken: "model",
+  reasoningEnabled: true,
+  defaultSystemMessage: "",
 };
 
+const defaultCategories: Category[] = [
+  {
+    id: DEFAULT_CATEGORY_ID,
+    name: "Uncategorized",
+  },
+];
+
 export function useDatasetState() {
-  const [categories, setCategories] = useState<Category[]>([
-    { id: DEFAULT_CATEGORY_ID, name: "Uncategorized", collapsed: false },
-  ]);
-  const [entries, setEntries] = useState<Entry[]>([]);
-  const [activeEntry, setActiveEntry] = useState<Entry | null>(null);
-  const [settings, setSettings] = useState<DatasetSettings>(defaultSettings);
   const [hydrated, setHydrated] = useState(false);
 
-  // hydrate
+  const [categories, setCategories] = useState<Category[]>(defaultCategories);
+  const [entries, setEntries] = useState<Entry[]>([]);
+  const [activeEntry, setActiveEntryInternal] = useState<Entry | null>(null);
+  const [settings, setSettings] = useState<DatasetSettings>(defaultSettings);
+  const [specialTokens, setSpecialTokens] = useState<SpecialToken[]>([]);
+
+  // ---------- Hydrate from localStorage ----------
   useEffect(() => {
-    const loaded = loadState(STORAGE_KEY);
-    if (loaded) {
-      setCategories(loaded.categories);
-      setEntries(loaded.entries);
-      setSettings(loaded.settings);
-      if (loaded.activeEntryId) {
-        const found = loaded.entries.find((e) => e.id === loaded.activeEntryId) ?? null;
-        setActiveEntry(found);
-      } else {
-        setActiveEntry(loaded.entries[0] ?? null);
+    if (typeof window === "undefined") return;
+
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      if (!raw) {
+        setHydrated(true);
+        return;
       }
+
+      const parsed: DatasetStateSnapshot = JSON.parse(raw);
+
+      setCategories(parsed.categories?.length ? parsed.categories : defaultCategories);
+      setEntries(parsed.entries ?? []);
+      setSettings({ ...defaultSettings, ...(parsed.settings ?? {}) });
+      setSpecialTokens(parsed.specialTokens ?? []);
+    } catch (err) {
+      console.error("Failed to load dataset state:", err);
+      setCategories(defaultCategories);
+      setEntries([]);
+      setSettings(defaultSettings);
+      setSpecialTokens([]);
+    } finally {
+      setHydrated(true);
     }
-    setHydrated(true);
   }, []);
 
-  // autosave
+  // ---------- Autosave ----------
   useEffect(() => {
     if (!hydrated) return;
-    const toSave: SavedState = {
+    if (typeof window === "undefined") return;
+
+    const snapshot: DatasetStateSnapshot = {
       categories,
       entries,
-      activeEntryId: activeEntry?.id ?? null,
       settings,
+      specialTokens,
     };
-    saveState(STORAGE_KEY, toSave);
-  }, [hydrated, categories, entries, activeEntry, settings]);
 
-  // category ops
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+    } catch (err) {
+      console.error("Failed to save dataset state:", err);
+    }
+  }, [hydrated, categories, entries, settings, specialTokens]);
+
+  // ---------- Active entry helper ----------
+  const setActiveEntry = (entry: Entry | null) => {
+    if (!entry) {
+      setActiveEntryInternal(null);
+      return;
+    }
+    const found = entries.find((e) => e.id === entry.id);
+    setActiveEntryInternal(found ?? null);
+  };
+
+  useEffect(() => {
+    if (!activeEntry) return;
+    const updated = entries.find((e) => e.id === activeEntry.id) ?? null;
+    setActiveEntryInternal(updated);
+  }, [entries, activeEntry?.id]);
+
+  // ---------- Category ops ----------
   const createCategory = (name: string) => {
-    const newCat: Category = {
-      id: `cat-${Date.now()}`,
-      name,
-      collapsed: false,
-    };
-    setCategories((prev) => [...prev, newCat]);
+    const id = crypto.randomUUID ? crypto.randomUUID() : `cat-${Date.now()}-${Math.random()}`;
+    const cat: Category = { id, name };
+    setCategories((prev) => [...prev, cat]);
+    return cat;
   };
 
   const updateCategory = (cat: Category) => {
     setCategories((prev) => prev.map((c) => (c.id === cat.id ? cat : c)));
   };
 
-  const deleteCategory = (catId: string) => {
-    if (catId === DEFAULT_CATEGORY_ID) return;
+  const deleteCategory = (cat: Category) => {
+    if (cat.id === DEFAULT_CATEGORY_ID) return;
+
+    setCategories((prev) => prev.filter((c) => c.id !== cat.id));
     setEntries((prev) =>
-      prev.map((e) => (e.categoryId === catId ? { ...e, categoryId: DEFAULT_CATEGORY_ID } : e))
+      prev.map((e) =>
+        e.categoryId === cat.id ? { ...e, categoryId: DEFAULT_CATEGORY_ID } : e
+      )
     );
-    setCategories((prev) => prev.filter((c) => c.id !== catId));
   };
 
-  // entry ops
+  // ---------- Entry ops ----------
   const createEntry = (categoryId?: string) => {
-    const id = entries.length + 1;
-    const newEntry: Entry = {
+    const id = crypto.randomUUID ? crypto.randomUUID() : `ent-${Date.now()}-${Math.random()}`;
+
+    const initialMessages: Message[] = [];
+    if (settings.defaultSystemMessage.trim()) {
+      initialMessages.push({
+        role: "system",
+        content: settings.defaultSystemMessage,
+        rich: [{ type: "text", value: settings.defaultSystemMessage }],
+      });
+    }
+
+    const entry: Entry = {
       id,
-      title: `Entry ${id}`,
       categoryId: categoryId ?? DEFAULT_CATEGORY_ID,
-      messages: [],
+      title: "New Entry",
+      messages: initialMessages,
+      createdAt: new Date().toISOString(),
     };
-    setEntries((prev) => [...prev, newEntry]);
-    setActiveEntry(newEntry);
+
+    setEntries((prev) => [...prev, entry]);
+    setActiveEntryInternal(entry);
+    return entry;
   };
 
   const updateEntry = (entry: Entry) => {
     setEntries((prev) => prev.map((e) => (e.id === entry.id ? entry : e)));
-    if (activeEntry?.id === entry.id) setActiveEntry(entry);
   };
 
-  const deleteEntry = (entryId: number) => {
+  const deleteEntry = (entryId: string) => {
     setEntries((prev) => prev.filter((e) => e.id !== entryId));
     if (activeEntry?.id === entryId) {
-      setActiveEntry(null);
+      setActiveEntryInternal(null);
     }
   };
 
-  // messages
+  // ---------- Message ops ----------
   const addMessageToActive = (msg: Message) => {
     if (!activeEntry) return;
-    const updated: Entry = {
-      ...activeEntry,
-      messages: [...activeEntry.messages, msg],
-    };
-    updateEntry(updated);
+    const updated: Entry = { ...activeEntry, messages: [...activeEntry.messages, msg] };
+    setEntries((prev) => prev.map((e) => (e.id === updated.id ? updated : e)));
+    setActiveEntryInternal(updated);
   };
 
   const updateMessageInActive = (index: number, msg: Message) => {
     if (!activeEntry) return;
-    const updated: Entry = {
-      ...activeEntry,
-      messages: activeEntry.messages.map((m, i) => (i === index ? msg : m)),
-    };
-    updateEntry(updated);
+    const messages = activeEntry.messages.map((m, i) => (i === index ? msg : m));
+    const updated: Entry = { ...activeEntry, messages };
+    setEntries((prev) => prev.map((e) => (e.id === updated.id ? updated : e)));
+    setActiveEntryInternal(updated);
   };
 
   const deleteMessageInActive = (index: number) => {
     if (!activeEntry) return;
-    const updated: Entry = {
-      ...activeEntry,
-      messages: activeEntry.messages.filter((_, i) => i !== index),
-    };
-    updateEntry(updated);
+    const messages = activeEntry.messages.filter((_, i) => i !== index);
+    const updated: Entry = { ...activeEntry, messages };
+    setEntries((prev) => prev.map((e) => (e.id === updated.id ? updated : e)));
+    setActiveEntryInternal(updated);
   };
 
-  // export
-  const getExportJson = (): ExportSchema => ({
-    version: 2,
+  // ---------- Special tokens ----------
+  const createSpecialToken = () => {
+    const id = crypto.randomUUID ? crypto.randomUUID() : `tok-${Date.now()}-${Math.random()}`;
+    const tok: SpecialToken = {
+      id,
+      name: "NEW_TOKEN",
+      text: "",
+      color: "bg-amber-100",
+    };
+    setSpecialTokens((prev) => [...prev, tok]);
+    return tok;
+  };
+
+  const updateSpecialToken = (tok: SpecialToken) => {
+    setSpecialTokens((prev) => prev.map((t) => (t.id === tok.id ? tok : t)));
+  };
+
+  const deleteSpecialToken = (id: string) => {
+    setSpecialTokens((prev) => prev.filter((t) => t.id !== id));
+  };
+
+  // ---------- Export / Import ----------
+  // NOTE: these now operate on the snapshot object, as Modals expects.
+
+  const getExportJson = (): DatasetStateSnapshot => ({
     categories,
     entries,
     settings,
+    specialTokens,
   });
 
   const getExportTxt = (): string =>
     buildTxtFromEntries({
       entries,
-      ...settings,
+      specialTokens,
+      reasoningEnabled: settings.reasoningEnabled,
+      turnToken: settings.turnToken,
+      startToken: settings.startToken,
+      endToken: settings.endToken,
+      reasoningToken: settings.reasoningToken,
+      reasoningEndToken: settings.reasoningEndToken,
+      answerToken: settings.answerToken,
+      answerEndToken: settings.answerEndToken,
+      systemToken: settings.systemToken,
+      userToken: settings.userToken,
+      modelToken: settings.modelToken,
     });
 
-  // import
-  const importJson = (data: ExportSchema) => {
-    const fixedCats =
-      data.categories && data.categories.length > 0
-        ? data.categories
-        : [{ id: DEFAULT_CATEGORY_ID, name: "Uncategorized", collapsed: false }];
-
-    const fixedEntries =
-      data.entries?.map((e) => ({
-        ...e,
-        categoryId: e.categoryId ?? DEFAULT_CATEGORY_ID,
-      })) ?? [];
-
-    setCategories(fixedCats);
-    setEntries(fixedEntries);
-    setActiveEntry(fixedEntries[0] ?? null);
-
-    if (data.settings) {
-      setSettings({
-        ...defaultSettings,
-        ...data.settings,
-      });
-    }
+  const importJson = (data: DatasetStateSnapshot) => {
+    setCategories(data.categories?.length ? data.categories : defaultCategories);
+    setEntries(data.entries ?? []);
+    setSettings({ ...defaultSettings, ...(data.settings ?? {}) });
+    setSpecialTokens(data.specialTokens ?? []);
+    setActiveEntryInternal(data.entries?.[0] ?? null);
+    setHydrated(true);
   };
 
-  // ✅ clear workspace
   const clearWorkspace = () => {
-    const defaultCat: Category = {
-      id: DEFAULT_CATEGORY_ID,
-      name: "Uncategorized",
-      collapsed: false,
-    };
-    setCategories([defaultCat]);
+    setCategories(defaultCategories);
     setEntries([]);
-    setActiveEntry(null);
     setSettings(defaultSettings);
-
-    if (typeof window !== "undefined") {
-      window.localStorage.removeItem(STORAGE_KEY);
-    }
+    setSpecialTokens([]);
+    setActiveEntryInternal(null);
   };
 
   return {
@@ -213,10 +276,14 @@ export function useDatasetState() {
     addMessageToActive,
     updateMessageInActive,
     deleteMessageInActive,
-    getExportJson,
-    getExportTxt,
-    importJson,
-    clearWorkspace, // 👈 expose it
+    specialTokens,
+    createSpecialToken,
+    updateSpecialToken,
+    deleteSpecialToken,
+    getExportJson,   // now returns DatasetStateSnapshot
+    getExportTxt,    // still returns string
+    importJson,      // now accepts DatasetStateSnapshot
+    clearWorkspace,
     DEFAULT_CATEGORY_ID,
   };
 }

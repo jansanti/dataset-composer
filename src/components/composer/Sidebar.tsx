@@ -84,13 +84,13 @@ export default function Sidebar({
                       onClick={() => onRenameCategory(cat)}
                       className="text-[10px] px-1 py-0.5 bg-slate-100 rounded hover:bg-slate-200"
                     >
-                      📝
+                      Rename
                     </button>
                     <button
                       onClick={() => onDeleteCategory(cat)}
                       className="text-[10px] px-1 py-0.5 bg-red-50 text-red-500 rounded hover:bg-red-100"
                     >
-                      🗑
+                      Delete
                     </button>
                   </>
                 )}
@@ -98,7 +98,7 @@ export default function Sidebar({
                   onClick={() => onCreateEntry(cat.id)}
                   className="text-[10px] px-1 py-0.5 bg-slate-900 text-white rounded hover:bg-slate-700"
                 >
-                  +
+                  + Add
                 </button>
               </div>
               {!cat.collapsed && (
@@ -128,7 +128,7 @@ export default function Sidebar({
                             }}
                             className="text-[10px] px-1 py-0.5 bg-slate-100 rounded hover:bg-slate-200"
                           >
-                            📝
+                            Rename
                           </button>
                           <button
                             onClick={(ev) => {
@@ -137,7 +137,7 @@ export default function Sidebar({
                             }}
                             className="text-[10px] px-1 py-0.5 bg-red-50 text-red-500 rounded hover:bg-red-100"
                           >
-                            🗑
+                            Delete
                           </button>
                         </div>
                       </div>

@@ -1,22 +1,38 @@
-export interface Category {
-  id: string;
-  name: string;
-  collapsed: boolean;
-}
+// src/types/dataset.ts
 
 export type Role = "system" | "user" | "model";
+
+export type RichSegment =
+  | { type: "text"; value: string }
+  | { type: "token"; tokenId: string };
 
 export interface Message {
   role: Role;
   content: string;
   thinkingBlock?: string;
+  rich?: RichSegment[];
+  thinkingRich?: RichSegment[];
 }
 
 export interface Entry {
-  id: number;
-  title?: string;
+  id: string;
   categoryId: string;
+  title?: string;
   messages: Message[];
+  createdAt?: string;
+}
+
+export interface Category {
+  id: string;
+  name: string;
+  collapsed?: boolean;
+}
+
+export interface SpecialToken {
+  id: string;
+  name: string;
+  text: string;
+  color?: string;
 }
 
 export interface DatasetSettings {
@@ -30,18 +46,22 @@ export interface DatasetSettings {
   systemToken: string;
   userToken: string;
   modelToken: string;
+  reasoningEnabled: boolean;
+  defaultSystemMessage: string;
 }
 
-export interface SavedState {
+/**
+ * Snapshot of the whole dataset used for import/export/autosave.
+ */
+export interface DatasetStateSnapshot {
   categories: Category[];
   entries: Entry[];
-  activeEntryId: number | null;
   settings: DatasetSettings;
+  specialTokens: SpecialToken[];
 }
 
-export interface ExportSchema {
-  version: number;
-  categories: Category[];
-  entries: Entry[];
-  settings?: Partial<DatasetSettings>;
-}
+/**
+ * Backwards-compat name used in older parts of the code (e.g., Modals.tsx).
+ * It is equivalent to DatasetStateSnapshot.
+ */
+export type ExportSchema = DatasetStateSnapshot;

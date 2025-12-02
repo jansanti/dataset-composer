@@ -1,7 +1,10 @@
-import { Entry } from "../types/dataset";
+import { Entry, SpecialToken } from "../types/dataset";
+import { segmentsToPlain } from "./rich";
 
 export function buildTxtFromEntries({
   entries,
+  specialTokens,
+  reasoningEnabled,
   turnToken,
   startToken,
   endToken,
@@ -14,6 +17,8 @@ export function buildTxtFromEntries({
   modelToken,
 }: {
   entries: Entry[];
+  specialTokens: SpecialToken[];
+  reasoningEnabled: boolean;
   turnToken: string;
   startToken: string;
   endToken: string;
@@ -25,21 +30,43 @@ export function buildTxtFromEntries({
   userToken: string;
   modelToken: string;
 }) {
-  let combined = "";
-  entries.forEach((entry) => {
-    entry.messages.forEach((m) => {
+  let txt = "";
+
+  for (const entry of entries) {
+    for (const m of entry.messages) {
       if (m.role === "system") {
-        combined += `${turnToken}${systemToken}${startToken}${m.content}${endToken}\n`;
-      } else if (m.role === "user") {
-        combined += `${turnToken}${userToken}${startToken}${m.content}${endToken}\n`;
-      } else if (m.role === "model") {
-        const thinking = m.thinkingBlock
-          ? `${reasoningToken}${m.thinkingBlock}${reasoningEndToken}`
-          : "";
-        combined += `${turnToken}${modelToken}${startToken}${thinking}${answerToken}${m.content}${endToken}${answerEndToken}\n`;
+        const text = m.rich ? segmentsToPlain(m.rich, specialTokens) : m.content;
+        txt += `${turnToken}${systemToken}${startToken}${text}${endToken}\n`;
       }
-    });
-    combined += "<|endoftext|>\n";
-  });
-  return combined;
+
+      if (m.role === "user") {
+        const text = m.rich ? segmentsToPlain(m.rich, specialTokens) : m.content;
+        txt += `${turnToken}${userToken}${startToken}${text}${endToken}\n`;
+      }
+
+      if (m.role === "model") {
+        const think = m.thinkingRich
+          ? segmentsToPlain(m.thinkingRich, specialTokens)
+          : m.thinkingBlock ?? "";
+
+        const out = m.rich
+          ? segmentsToPlain(m.rich, specialTokens)
+          : m.content;
+
+        if (reasoningEnabled) {
+          const t = think
+            ? `${reasoningToken}${think}${reasoningEndToken}`
+            : "";
+
+          txt += `${turnToken}${modelToken}${startToken}${t}${answerToken}${out}${endToken}${answerEndToken}\n`;
+        } else {
+          txt += `${turnToken}${modelToken}${startToken}${out}${endToken}\n`;
+        }
+      }
+    }
+
+    txt += "<|endoftext|>\n";
+  }
+
+  return txt;
 }
