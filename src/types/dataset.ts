@@ -61,7 +61,8 @@ export interface DatasetStateSnapshot {
 }
 
 /**
- * Backwards-compat name used in older parts of the code (e.g., Modals.tsx).
- * It is equivalent to DatasetStateSnapshot.
+ * Backwards-compat names used in older parts of the code.
+ * They are all the same shape as DatasetStateSnapshot.
  */
 export type ExportSchema = DatasetStateSnapshot;
+export type SavedState = DatasetStateSnapshot;
